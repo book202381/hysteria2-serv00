@@ -1,5 +1,5 @@
 #!/bin/sh
-# Hysteria2 一键安装脚本（自包含版 + 客户端订阅信息输出）
+# Hysteria2 一键安装脚本（Let’s Encrypt 版 + 客户端订阅信息输出）
 
 set -e
 
@@ -42,19 +42,24 @@ fi
 . "$HOME/.acme.sh/acme.sh.env"
 export CF_Token="$CF_TOKEN"
 
+# 切换到 Let’s Encrypt，清理 ZeroSSL
+echo "切换到 Let’s Encrypt..."
+$HOME/.acme.sh/acme.sh --deactivate-account --server zerossl || true
+rm -rf $HOME/.acme.sh/ca/zerossl || true
+$HOME/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+$HOME/.acme.sh/acme.sh --register-account -m youremail@example.com --server letsencrypt
+
 # 检查证书
 echo "检查 $DOMAIN 的证书..."
 CERT_FOUND=0
 
-# 1. 检查 acme.sh 是否有记录
-if "$HOME/.acme.sh/acme.sh" --list | grep -q "$DOMAIN"; then
+if $HOME/.acme.sh/acme.sh --list | grep -q "$DOMAIN"; then
   echo "acme.sh 已有 $DOMAIN 的记录"
 else
   echo "acme.sh 没有 $DOMAIN 的记录，开始申请..."
-  "$HOME/.acme.sh/acme.sh" --issue -d "$DOMAIN" --dns dns_cf
+  $HOME/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf
 fi
 
-# 2. 检查 acme.sh 默认目录
 if [ -f "$HOME/.acme.sh/$DOMAIN/fullchain.cer" ] && [ -f "$HOME/.acme.sh/$DOMAIN/$DOMAIN.key" ]; then
   echo "发现 acme.sh 已签发的证书，复制到 Hysteria2 目录..."
   cp "$HOME/.acme.sh/$DOMAIN/fullchain.cer" "$CERT_DIR/fullchain.pem"
@@ -62,19 +67,10 @@ if [ -f "$HOME/.acme.sh/$DOMAIN/fullchain.cer" ] && [ -f "$HOME/.acme.sh/$DOMAIN
   CERT_FOUND=1
 fi
 
-# 3. 检查 certbot 默认目录
-if [ $CERT_FOUND -eq 0 ] && [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/$DOMAIN/privkey.pem" ]; then
-  echo "发现 certbot 已签发的证书，复制到 Hysteria2 目录..."
-  cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$CERT_DIR/fullchain.pem"
-  cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem" "$CERT_DIR/privkey.pem"
-  CERT_FOUND=1
-fi
-
-# 4. 如果没找到，强制重新申请
 if [ $CERT_FOUND -eq 0 ]; then
   echo "未找到现有证书，强制重新申请..."
-  "$HOME/.acme.sh/acme.sh" --issue -d "$DOMAIN" --dns dns_cf --force
-  "$HOME/.acme.sh/acme.sh" --install-cert -d "$DOMAIN" \
+  $HOME/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf --force
+  $HOME/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
     --key-file "$CERT_DIR/privkey.pem" \
     --fullchain-file "$CERT_DIR/fullchain.pem"
 fi
@@ -145,13 +141,11 @@ echo "日志: $LOG_FILE"
 echo ""
 echo "=== 客户端订阅信息 ==="
 
-# V2RayN 格式
 V2RAYN_URL="hysteria2://${PASSWORD}@${DOMAIN}:${PORT}/?insecure=0&sni=${DOMAIN}#Hysteria2-${DOMAIN}"
 echo "V2RayN 链接："
 echo "$V2RAYN_URL"
 echo ""
 
-# Clash 配置片段
 echo "Clash 配置片段："
 cat <<EOF
 - name: "Hysteria2-${DOMAIN}"
