@@ -1,9 +1,8 @@
 #!/bin/sh
-# Hysteria2 一键安装脚本（带证书检测与自动申请）
+# Hysteria2 一键安装脚本（自包含版 + 客户端订阅信息输出）
 
 set -e
 
-REPO_BASE="https://raw.githubusercontent.com/book202381/hysteria2-serv00/main"
 BASE_DIR="$HOME/hysteria2"
 BIN_DIR="$BASE_DIR/bin"
 CONF_FILE="$BASE_DIR/config.yaml"
@@ -80,19 +79,22 @@ if [ $CERT_FOUND -eq 0 ]; then
     --fullchain-file "$CERT_DIR/fullchain.pem"
 fi
 
-# 生成配置文件
+# 生成 config.yaml
 echo "生成配置文件..."
-fetch -o "$BASE_DIR/config.template" "$REPO_BASE/config.template"
-sed "s|\${LISTEN_ADDR}|0.0.0.0:${PORT}|g; \
-     s|\${CERT_PATH}|${CERT_DIR}/fullchain.pem|g; \
-     s|\${KEY_PATH}|${CERT_DIR}/privkey.pem|g; \
-     s|\${PASSWORD}|${PASSWORD}|g" \
-     "$BASE_DIR/config.template" > "$CONF_FILE"
+cat > "$CONF_FILE" <<EOF
+listen: 0.0.0.0:${PORT}
 
-# 下载控制脚本
-fetch -o "$BASE_DIR/start.sh" "$REPO_BASE/start.sh"
-fetch -o "$BASE_DIR/stop.sh" "$REPO_BASE/stop.sh"
-chmod +x "$BASE_DIR/"*.sh
+tls:
+  cert: ${CERT_DIR}/fullchain.pem
+  key: ${CERT_DIR}/privkey.pem
+
+auth:
+  type: password
+  password: ${PASSWORD}
+
+udp:
+  enabled: true
+EOF
 
 # 写 renew.sh
 cat > "$BASE_DIR/renew.sh" << 'EOF'
@@ -138,3 +140,26 @@ echo "域名: $DOMAIN"
 echo "端口: $PORT"
 echo "证书: $CERT_DIR"
 echo "日志: $LOG_FILE"
+
+# 输出客户端订阅信息
+echo ""
+echo "=== 客户端订阅信息 ==="
+
+# V2RayN 格式
+V2RAYN_URL="hysteria2://${PASSWORD}@${DOMAIN}:${PORT}/?insecure=0&sni=${DOMAIN}#Hysteria2-${DOMAIN}"
+echo "V2RayN 链接："
+echo "$V2RAYN_URL"
+echo ""
+
+# Clash 配置片段
+echo "Clash 配置片段："
+cat <<EOF
+- name: "Hysteria2-${DOMAIN}"
+  type: hysteria2
+  server: ${DOMAIN}
+  port: ${PORT}
+  auth-str: "${PASSWORD}"
+  sni: ${DOMAIN}
+  skip-cert-verify: false
+  udp: true
+EOF
