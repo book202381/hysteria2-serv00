@@ -33,7 +33,6 @@ chmod +x "$BIN_DIR/hysteria"
 
 # 安装 acme.sh（用户目录，无需 root）
 echo "安装 acme.sh..."
-# 优先使用 curl，其次使用 fetch
 if command -v curl >/dev/null 2>&1; then
   curl https://get.acme.sh | sh
 else
@@ -47,14 +46,16 @@ fi
 # 设置 Cloudflare Token 环境变量（仅当前会话）
 export CF_Token="$CF_TOKEN"
 
-# 使用 DNS-01 签发证书（避免占用 80/443）
-echo "为 $DOMAIN 申请 Let's Encrypt 证书（Cloudflare DNS-01）..."
-"$HOME/.acme.sh/acme.sh" --issue -d "$DOMAIN" --dns dns_cf
-
-# 安装证书到目标路径
-"$HOME/.acme.sh/acme.sh" --install-cert -d "$DOMAIN" \
-  --key-file "$CERT_DIR/privkey.pem" \
-  --fullchain-file "$CERT_DIR/fullchain.pem"
+# 检查证书是否存在
+if [ ! -f "$CERT_DIR/fullchain.pem" ] || [ ! -f "$CERT_DIR/privkey.pem" ]; then
+  echo "证书不存在，开始申请..."
+  "$HOME/.acme.sh/acme.sh" --issue -d "$DOMAIN" --dns dns_cf
+  "$HOME/.acme.sh/acme.sh" --install-cert -d "$DOMAIN" \
+    --key-file "$CERT_DIR/privkey.pem" \
+    --fullchain-file "$CERT_DIR/fullchain.pem"
+else
+  echo "检测到已存在证书，跳过申请与安装。"
+fi
 
 # 下载配置模板并替换占位符
 echo "生成 Hysteria2 配置..."
@@ -70,8 +71,42 @@ sed "s|\${LISTEN_ADDR}|0.0.0.0:${PORT}|g; \
 echo "下载控制脚本..."
 fetch -o "$BASE_DIR/start.sh" "$REPO_BASE/start.sh"
 fetch -o "$BASE_DIR/stop.sh" "$REPO_BASE/stop.sh"
-fetch -o "$BASE_DIR/renew.sh" "$REPO_BASE/renew.sh"
 chmod +x "$BASE_DIR/"*.sh
+
+# 写入 renew.sh
+cat > "$BASE_DIR/renew.sh" << 'EOF'
+#!/bin/sh
+# Hysteria2 证书续签后自动重启脚本
+
+BASE_DIR="$HOME/hysteria2"
+BIN_DIR="$BASE_DIR/bin"
+CONF_FILE="$BASE_DIR/config.yaml"
+LOG_FILE="$BASE_DIR/hysteria.log"
+PID_FILE="$BASE_DIR/hysteria.pid"
+
+DOMAIN=$1
+
+echo "=== 开始续签处理 ==="
+echo "域名: $DOMAIN"
+
+# 停止旧进程
+if [ -f "$PID_FILE" ]; then
+  PID=$(cat "$PID_FILE")
+  if kill -0 "$PID" >/dev/null 2>&1; then
+    echo "停止旧的 Hysteria2 进程 (PID=$PID)..."
+    kill "$PID"
+    sleep 2
+  fi
+fi
+
+# 启动新进程
+echo "启动新的 Hysteria2..."
+nohup "$BIN_DIR/hysteria" server -c "$CONF_FILE" > "$LOG_FILE" 2>&1 &
+echo $! > "$PID_FILE"
+
+echo "=== 续签处理完成 ==="
+EOF
+chmod +x "$BASE_DIR/renew.sh"
 
 # 启动服务
 echo "启动 Hysteria2..."
@@ -81,7 +116,6 @@ echo $! > "$PID_FILE"
 # 设置 acme.sh 自动续签（每日检查一次）
 echo "设置自动续签定时任务（crontab）..."
 CRON_LINE="0 3 * * * . $HOME/.acme.sh/acme.sh.env && CF_Token=${CF_TOKEN} $HOME/.acme.sh/acme.sh --renew -d ${DOMAIN} --dns dns_cf --home $HOME/.acme.sh >/dev/null 2>&1 && sh $BASE_DIR/renew.sh ${DOMAIN}"
-# 追加到用户 crontab（避免重复）
 ( crontab -l 2>/dev/null | grep -v "$BASE_DIR/renew.sh" ; echo "$CRON_LINE" ) | crontab -
 
 echo "=== 安装完成 ==="
@@ -91,14 +125,10 @@ echo "证书: $CERT_DIR"
 echo "日志: $LOG_FILE"
 echo "PID : $PID_FILE"
 echo "客户端请使用该域名与端口连接，并使用你设置的密码认证。"
+
 # 下载订阅生成脚本
 fetch -o "$BASE_DIR/gen_sub.sh" "$REPO_BASE/gen_sub.sh"
 chmod +x "$BASE_DIR/gen_sub.sh"
-
-# 启动服务
-echo "启动 Hysteria2..."
-nohup "$BIN_DIR/hysteria" server -c "$CONF_FILE" > "$LOG_FILE" 2>&1 &
-echo $! > "$PID_FILE"
 
 # 输出订阅信息
 sh "$BASE_DIR/gen_sub.sh" "$DOMAIN" "$PORT" "$PASSWORD"
