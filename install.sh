@@ -1,5 +1,5 @@
 #!/bin/sh
-# Hysteria2 一键安装脚本（Let’s Encrypt 版 + 自动续期 + 客户端信息输出）
+# Hysteria2 一键安装脚本（Let’s Encrypt 版 + 自动续期 + 客户端信息输出 + 一键诊断）
 
 set -e
 
@@ -51,30 +51,20 @@ rm -rf $HOME/.acme.sh/ca/zerossl || true
 $HOME/.acme.sh/acme.sh --set-default-ca --server letsencrypt
 $HOME/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt
 
-# 检查证书
-echo "检查 $DOMAIN 的证书..."
-CERT_FOUND=0
-
-if $HOME/.acme.sh/acme.sh --list | grep -q "$DOMAIN"; then
-  echo "acme.sh 已有 $DOMAIN 的记录"
-else
-  echo "acme.sh 没有 $DOMAIN 的记录，开始申请..."
-  $HOME/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf
+# 申请证书
+echo "申请证书..."
+if ! $HOME/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf --force; then
+  echo "证书申请失败，请检查域名是否在你 Cloudflare 账号下，或改用 --standalone 模式"
+  exit 1
 fi
 
-if [ -f "$HOME/.acme.sh/$DOMAIN/fullchain.cer" ] && [ -f "$HOME/.acme.sh/$DOMAIN/$DOMAIN.key" ]; then
-  echo "发现 acme.sh 已签发的证书，复制到 Hysteria2 目录..."
-  cp "$HOME/.acme.sh/$DOMAIN/fullchain.cer" "$CERT_DIR/fullchain.pem"
-  cp "$HOME/.acme.sh/$DOMAIN/$DOMAIN.key" "$CERT_DIR/privkey.pem"
-  CERT_FOUND=1
-fi
+$HOME/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
+  --key-file "$CERT_DIR/privkey.pem" \
+  --fullchain-file "$CERT_DIR/fullchain.pem"
 
-if [ $CERT_FOUND -eq 0 ]; then
-  echo "未找到现有证书，强制重新申请..."
-  $HOME/.acme.sh/acme.sh --issue -d "$DOMAIN" --dns dns_cf --force
-  $HOME/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
-    --key-file "$CERT_DIR/privkey.pem" \
-    --fullchain-file "$CERT_DIR/fullchain.pem"
+if [ ! -s "$CERT_DIR/privkey.pem" ] || [ ! -s "$CERT_DIR/fullchain.pem" ]; then
+  echo "证书文件不存在或为空，退出。"
+  exit 1
 fi
 
 # 生成 config.yaml
@@ -159,3 +149,30 @@ cat <<EOF
   skip-cert-verify: false
   udp: true
 EOF
+
+# 一键诊断命令
+cat > "$BASE_DIR/diagnose.sh" <<EOF
+#!/bin/sh
+echo "=== Hysteria2 一键诊断 ==="
+echo "1. 检查进程："
+ps -ef | grep hysteria | grep -v grep || echo "未找到 hysteria 进程"
+
+echo ""
+echo "2. 检查端口监听："
+netstat -an | grep ${PORT} || echo "端口 ${PORT} 未监听"
+
+echo ""
+echo "3. 检查证书文件："
+ls -l ${CERT_DIR}/fullchain.pem ${CERT_DIR}/privkey.pem || echo "证书文件缺失"
+
+echo ""
+echo "4. 查看日志最后 20 行："
+tail -n 20 ${LOG_FILE} || echo "日志文件不存在"
+
+echo "=== 诊断完成 ==="
+EOF
+chmod +x "$BASE_DIR/diagnose.sh"
+
+echo ""
+echo "你可以运行以下命令进行诊断："
+echo "sh $BASE_DIR/diagnose.sh"
