@@ -150,10 +150,11 @@ cat <<EOF
   udp: true
 EOF
 
-# 一键诊断命令
+# 一键诊断脚本
 cat > "$BASE_DIR/diagnose.sh" <<EOF
 #!/bin/sh
 echo "=== Hysteria2 一键诊断 ==="
+
 echo "1. 检查进程："
 ps -ef | grep hysteria | grep -v grep || echo "未找到 hysteria 进程"
 
