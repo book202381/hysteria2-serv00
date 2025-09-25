@@ -1,5 +1,5 @@
 #!/bin/sh
-# Hysteria2 一键安装脚本（Let’s Encrypt 版 + 客户端订阅信息输出）
+# Hysteria2 一键安装脚本（Let’s Encrypt 版 + 自动续期 + 客户端信息输出）
 
 set -e
 
@@ -21,6 +21,8 @@ echo "请输入连接密码："
 read PASSWORD
 echo "请输入 Cloudflare API Token："
 read CF_TOKEN
+echo "请输入注册邮箱（用于证书申请）："
+read EMAIL
 
 # 创建目录
 mkdir -p "$BIN_DIR" "$CERT_DIR"
@@ -47,7 +49,7 @@ echo "切换到 Let’s Encrypt..."
 $HOME/.acme.sh/acme.sh --deactivate-account --server zerossl || true
 rm -rf $HOME/.acme.sh/ca/zerossl || true
 $HOME/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-$HOME/.acme.sh/acme.sh --register-account -m youremail@example.com --server letsencrypt
+$HOME/.acme.sh/acme.sh --register-account -m "$EMAIL" --server letsencrypt
 
 # 检查证书
 echo "检查 $DOMAIN 的证书..."
